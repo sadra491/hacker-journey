@@ -4,137 +4,173 @@ import datetime
 from autohunter_core import normalize_target, load_proxies, RequestEngine, BlockDetected
 from wrappers import AVAILABLE_MODULES
 
-# Page Configuration
-st.set_page_config(page_title="AutoHunter", page_icon="🕵️", layout="wide")
+# 1. Page Configuration & Hacker CSS
+st.set_page_config(page_title="AUTOHUNTER // OFFENSIVE", page_icon="💀", layout="wide")
 
-st.title("🕵️ AutoHunter")
-st.markdown("**Automated Recon & Vulnerability Scanner**")
-st.markdown("---")
+st.markdown("""
+<style>
+    /* Dark Theme */
+    .stApp { background-color: #050505; color: #00ff41; font-family: 'Courier New', monospace; }
+    /* Sidebar */
+    [data-testid="stSidebar"] { background-color: #0a0a0a; border-right: 1px solid #00ff41; }
+    /* Buttons */
+    .stButton>button { background-color: #000; color: #00ff41; border: 1px solid #00ff41; border-radius: 0; font-weight: bold; transition: 0.3s; }
+    .stButton>button:hover { background-color: #00ff41; color: #000; box-shadow: 0 0 10px #00ff41; }
+    /* Inputs */
+    .stTextInput>div>div>input, .stTextArea>div>div>textarea { background-color: #111; color: #00ff41; border: 1px solid #333; border-radius: 0; }
+    .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus { border-color: #00ff41; box-shadow: 0 0 5px #00ff41; }
+    /* Multiselect */
+    .stMultiSelect>div>div { background-color: #111; border: 1px solid #333; }
+    /* Typography */
+    h1, h2, h3 { color: #ff003c !important; text-transform: uppercase; letter-spacing: 2px; }
+    p, label { color: #00ff41 !important; }
+    /* Terminal Box */
+    .terminal-box { background-color: #000; border: 1px solid #333; padding: 15px; font-family: 'Courier New', monospace; color: #00ff41; height: 400px; overflow-y: auto; }
+    .finding-high { color: #ff003c; font-weight: bold; }
+    .finding-info { color: #00aaff; }
+</style>
+""", unsafe_allow_html=True)
 
-# Sidebar for Settings
+st.title("💀 AUTOHUNTER // v2.0")
+st.markdown("`[ SYSTEM READY ]` // Awaiting target parameters...")
+
+# Initialize Session State for Engine to persist across reruns
+if 'engine' not in st.session_state:
+    st.session_state.engine = RequestEngine()
+if 'proxy_index' not in st.session_state:
+    st.session_state.proxy_index = 0
+
+# Sidebar Settings
 with st.sidebar:
-    st.header("⚙️ Settings")
-    target_input = st.text_input("Target (Domain or URL)", "http://127.0.0.1:8001")
+    st.header("[ CONFIGURATION ]")
+    target_input = st.text_input("TARGET (Domain/IP)", "http://127.0.0.1:8001")
     
-    st.subheader("Modules")
+    st.subheader("[ MODULES ]")
     selected_modules = st.multiselect(
-        "Select modules to run:",
+        "Select Attack Vectors:",
         options=list(AVAILABLE_MODULES.keys()),
         default=list(AVAILABLE_MODULES.keys())
     )
     
-    st.subheader("Advanced")
-    use_proxy = st.checkbox("Use Proxy Rotation")
-    proxy_text = st.text_area("Proxy List (one per line)", placeholder="http://ip:port\nsocks5://ip:port")
+    st.subheader("[ EVASION ]")
+    use_proxy = st.checkbox("Enable Proxy Rotation")
+    proxy_text = st.text_area("Proxy List (one per line)", placeholder="http://ip:port")
     
-    start_btn = st.button("🚀 Start Scan", use_container_width=True)
+    # Manual IP Rotate Button
+    if st.button("🔄 MANUAL IP ROTATE"):
+        proxies = load_proxies(proxy_text)
+        if proxies:
+            st.session_state.proxy_index = (st.session_state.proxy_index + 1) % len(proxies)
+            st.session_state.engine = RequestEngine(use_proxy_rotation=True, proxies=proxies)
+            st.session_state.engine.proxy_index = st.session_state.proxy_index
+            st.toast(f"IP Rotated to: {proxies[st.session_state.proxy_index]}")
+        else:
+            st.error("No proxies in list!")
 
-# Main Area
+    st.markdown("---")
+    start_btn = st.button("🚀 EXECUTE SCAN", use_container_width=True)
+    stop_btn = st.button("🛑 ABORT SCAN", use_container_width=True)
+
+
+# Main Logic
 if start_btn:
-    if not target_input:
-        st.error("Please enter a target.")
-    elif not selected_modules:
-        st.error("Please select at least one module.")
+    if not target_input or not selected_modules:
+        st.error("Target and Modules are required.")
     else:
         try:
-            # Normalize target and setup engine
             target = normalize_target(target_input)
-            proxies = load_proxies(proxy_text) if use_proxy else []
-            engine = RequestEngine(use_proxy_rotation=use_proxy, proxies=proxies)
+            proxies = load_proxies(proxy_text)
             
-            st.info(f"Starting scan on: **{target}**")
+            # Update Engine
+            st.session_state.engine = RequestEngine(
+                use_proxy_rotation=use_proxy, 
+                proxies=proxies
+            )
             
-            # UI Elements for live updates
+            st.info(f"[*] Engaging target: {target}")
+            
             progress_bar = st.progress(0)
             status_text = st.empty()
-            log_area = st.container()
+            # Use a container for terminal-like live output
+            log_container = st.container()
             
             results = []
+            is_blocked = False
             
             for i, module_name in enumerate(selected_modules):
-                status_text.text(f"Running module: {module_name}...")
+                if is_blocked: break
+                
+                status_text.markdown(f"`[ RUNNING ]` -> **{module_name}**...")
                 func = AVAILABLE_MODULES[module_name]
                 
                 try:
-                    # Run the module
-                    res = func(target, engine)
+                    res = func(target, st.session_state.engine)
                     results.append(res)
                     
-                    # Display result in live log
-                    with log_area:
-                        st.success(f"✅ **{module_name}** finished with status: `{res['status']}`")
+                    with log_container:
                         if res['findings']:
                             for finding in res['findings']:
-                                st.write(f" - `[{finding['severity']}]` {finding['detail']}")
+                                sev = finding['severity']
+                                det = finding['detail']
+                                color_class = "finding-high" if sev in ["High", "Critical"] else "finding-info"
+                                # Display formatted output for Burp
+                                st.markdown(f"<div class='{color_class}'>[!] [{sev}] {module_name.upper()} -> {det}</div>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"<div class='finding-info'>[-] {module_name.upper()} -> Clean / No findings.</div>", unsafe_allow_html=True)
                                 
                 except BlockDetected as e:
-                    with log_area:
-                        st.error(f"🛑 **Blocked** while running {module_name}. Stopping scan.")
-                    break # Stop if blocked
+                    with log_container:
+                        st.error(f"🛑 [WAF BLOCK DETECTED] {str(e)}")
+                        st.error("⚠️ SCAN HALTED. Change your IP or wait before retrying.")
+                    is_blocked = True
+                    break 
                 except Exception as e:
-                    with log_area:
-                        st.error(f"❌ **Error** in {module_name}: {str(e)}")
+                    with log_container:
+                        st.warning(f"[!] Error in {module_name}: {str(e)}")
                 
-                # Update progress
                 progress_bar.progress((i + 1) / len(selected_modules))
-                time.sleep(0.5) # Small delay for UI smoothness
                 
-            status_text.text("Scan Complete!")
-            st.balloons()
-            
-            # --- Generate HTML Report ---
-            if results:
-                st.markdown("### 📄 Download Report")
+            if not is_blocked:
+                status_text.markdown("`[ SCAN COMPLETE ]`")
+                st.success("Scan finished successfully.")
                 
-                # HTML Generation Logic
-                html_content = f"""
-                <html>
-                <head>
-                    <title>AutoHunter Report</title>
+                # HTML Report Generation
+                if results:
+                    html_content = f"""
+                    <html>
+                    <head><title>AutoHunter Report</title>
                     <style>
-                        body {{ font-family: Arial, sans-serif; padding: 20px; }}
-                        table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
-                        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                        th {{ background-color: #f2f2f2; }}
-                        .Critical {{ color: red; font-weight: bold; }}
-                        .High {{ color: orange; font-weight: bold; }}
-                        .Medium {{ color: #d4a017; }}
-                        .Low {{ color: blue; }}
-                        .Info {{ color: gray; }}
+                        body {{ background-color: #050505; color: #00ff41; font-family: 'Courier New', monospace; padding: 20px; }}
+                        table {{ border-collapse: collapse; width: 100%; border: 1px solid #00ff41; }}
+                        th, td {{ border: 1px solid #333; padding: 10px; text-align: left; }}
+                        th {{ background-color: #111; color: #ff003c; }}
+                        .High {{ color: #ff003c; font-weight: bold; }}
+                        .Info {{ color: #00aaff; }}
                     </style>
-                </head>
-                <body>
-                    <h1>AutoHunter Scan Report</h1>
-                    <p><b>Target:</b> {target}</p>
-                    <p><b>Date:</b> {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-                    <table>
-                        <tr><th>Module</th><th>Status</th><th>Findings</th></tr>
-                """
-                
-                for res in results:
-                    findings_html = ""
-                    if res['findings']:
-                        findings_html = "<br>".join([f"<span class='{f['severity']}'>[{f['severity']}]</span> {f['detail']}" for f in res['findings']])
-                    else:
-                        findings_html = "No findings"
-                        
-                    html_content += f"<tr><td>{res['module']}</td><td>{res['status']}</td><td>{findings_html}</td></tr>"
-                    
-                html_content += """
-                    </table>
-                    <p style="margin-top: 40px; font-size: 12px; color: gray;">
-                        <i>Disclaimer: This tool is for authorized testing only. The developer is not responsible for any misuse.</i>
-                    </p>
-                </body>
-                </html>
-                """
-                
-                st.download_button(
-                    label="⬇️ Download HTML Report",
-                    data=html_content,
-                    file_name=f"autohunter_report_{int(time.time())}.html",
-                    mime="text/html"
-                )
-                
+                    </head>
+                    <body>
+                        <h1>💀 AutoHunter Offensive Report</h1>
+                        <p><b>Target:</b> {target}</p>
+                        <p><b>Timestamp:</b> {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+                        <table>
+                            <tr><th>Module</th><th>Status</th><th>Findings / Action Required</th></tr>
+                    """
+                    for res in results:
+                        findings_html = "<br>".join([f"<span class='{f['severity']}'>[{f['severity']}]</span> {f['detail']}" for f in res['findings']]) if res['findings'] else "No direct findings"
+                        html_content += f"<tr><td>{res['module']}</td><td>{res['status']}</td><td>{findings_html}</td></tr>"
+                    html_content += """
+                        </table>
+                        <p style="margin-top: 40px; font-size: 12px; color: gray;">Generated by AutoHunter. Authorized testing only.</p>
+                    </body></html>
+                    """
+                    st.download_button(
+                        label="⬇️ DOWNLOAD HTML REPORT",
+                        data=html_content,
+                        file_name=f"autohunter_report_{int(time.time())}.html",
+                        mime="text/html"
+                    )
         except Exception as e:
             st.error(f"Fatal Error: {e}")
+
+if stop_btn:
+    st.warning("Abort signal sent. Terminating current UI loop.")
