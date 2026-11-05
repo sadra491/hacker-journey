@@ -4,7 +4,8 @@ import importlib
 
 def run_tool_capture(tool_module_name, func_name, *args):
     """
-    خروجی پرینت ابزارها رو به دام میندازه تا توی UI نشون داده بشه.
+    خروجی پرینت ابزارها رو به دام میندازه و با فیلترهای سخت‌گیرانه،
+    از False Positive (باگ‌های کاذب) جلوگیری می‌کنه.
     """
     try:
         module = importlib.import_module(tool_module_name)
@@ -15,15 +16,51 @@ def run_tool_capture(tool_module_name, func_name, *args):
             func(*args)
         
         output = f.getvalue().strip()
+        output_lower = output.lower()
         
-        if output:
-            if any(keyword in output.lower() for keyword in ["found", "vulnerable", "detected", "success", "bypass"]):
-                return [{"severity": "High", "detail": output}]
-            else:
-                return [{"severity": "Info", "detail": output}]
-        return []
+        if not output:
+            return []
+
+        # ۱. فیلترهای منفی (اگر اینا باشن، یعنی قطعاً باگ نیست، حتی اگه [+] داشته باشه)
+        hard_negatives = [
+            "method not allowed", "405", "400 bad", "401", "403", "500",
+            "not found", "connection refused", "timeout", "failed to", 
+            "[-]", "no sql", "no xss", "not vulnerable", "not detected", 
+            "no path", "no ssti", "error:", "clean"
+        ]
+        if any(neg in output_lower for neg in hard_negatives):
+            return [{"severity": "Info", "detail": output}]
+            
+        # ۲. فیلتر ضد صفحه اصلی سایت (Soft 404)
+        if "[+]" in output and ("<!doctype html>" in output_lower or "<html" in output_lower):
+            if tool_module_name != "xss_scanner":
+                return [{"severity": "Info", "detail": "False Positive (Received standard HTML page instead of vulnerable response)\n\n" + output}]
+
+        # ۳. فیلتر مخصوص SSTI (چون عدد 49 خیلی وقتا تصادفی توی صفحه هست)
+        if tool_module_name == "ssti_scanner" and "expected result: 49" in output_lower:
+            return [{"severity": "Info", "detail": "False Positive Suspected: Scanner found '49' in the page, but it might be a coincidence (e.g., an ID or price). Manual verification required.\n\n" + output}]
+
+        # ۴. فیلترهای مثبت قطعی (اگر اینا باشن، یعنی صد در صد باگه)
+        hard_positives = [
+            "root:x:0:0",           # نشونه قطعی LFI موفق
+            "<script>alert",        # نشونه قطعی XSS
+            "sql syntax",           # نشونه قطعی خطای SQL
+            "successfully bypassed" # نشونه قطعی دور زدن احراز هویت
+        ]
+        if any(pos in output_lower for pos in hard_positives):
+            return [{"severity": "High", "detail": output}]
+
+        # ۵. فیلترهای مثبت نسبی
+        soft_positives = ["vulnerable", "found!", "evaluated our code"]
+        if any(pos in output_lower for pos in soft_positives):
+            return [{"severity": "High", "detail": output}]
+
+        # ۶. بقیه موارد
+        return [{"severity": "Info", "detail": output}]
+
     except Exception as e:
         return [{"severity": "Error", "detail": f"Failed to run {tool_module_name}: {str(e)}"}]
+
 
 # ==========================================
 # Wrappers برای ابزارهای واقعی
@@ -73,7 +110,7 @@ def run_tech_fingerprinter(target: str, engine) -> dict:
 
 
 # ==========================================
-# ثبت تمام ماژول‌ها برای نمایش در UI
+# ثبت تمام ماژول‌ها
 # ==========================================
 AVAILABLE_MODULES = {
     "xss_scanner": run_xss_scanner,
