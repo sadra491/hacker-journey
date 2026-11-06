@@ -30,7 +30,7 @@ def load_proxies(proxy_text: str) -> list:
 class RequestEngine:
     def __init__(self, jitter_min=1.0, jitter_max=3.0, timeout=10,
                  use_proxy_rotation=False, proxies=None, max_retries=2,
-                 block_wait_seconds=0):
+                 block_wait_seconds=0, custom_headers=None):
         self.jitter_min = jitter_min
         self.jitter_max = jitter_max
         self.timeout = timeout
@@ -41,6 +41,10 @@ class RequestEngine:
         self.block_wait_seconds = block_wait_seconds
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "AutoHunter/1.0"})
+        
+        # اضافه کردن هدرهای کاستوم (مثل Cookie یا Authorization)
+        if custom_headers:
+            self.session.headers.update(custom_headers)
 
     def _current_proxies(self):
         if not self.use_proxy_rotation or not self.proxies:
@@ -58,31 +62,42 @@ class RequestEngine:
     def request(self, method, url, **kwargs):
         self._jitter()
         kwargs.setdefault("timeout", self.timeout)
-        kwargs.setdefault("proxies", self._current_proxies())
         kwargs.setdefault("verify", False)
 
         last_exc = None
-        for attempt in range(self.max_retries + 1):
+        # تعداد تلاش‌ها برابر با تعداد پروکسی‌ها + ۲ بار تلاش عادی
+        total_attempts = max(self.max_retries + 1, len(self.proxies) + 1)
+        
+        for attempt in range(total_attempts):
+            kwargs["proxies"] = self._current_proxies()
+            
             try:
                 resp = self.session.request(method, url, **kwargs)
                 if resp.status_code in (429, 403):
-                    if self.block_wait_seconds > 0:
+                    # اگر بلاک شدیم
+                    if self.use_proxy_rotation and len(self.proxies) > 1:
+                        print(f"[!] Blocked. Auto-rotating IP to next proxy...")
+                        self._rotate_proxy()
+                        continue # دوباره با IP جدید تلاش کن
+                    elif self.block_wait_seconds > 0:
                         time.sleep(self.block_wait_seconds)
                         self.block_wait_seconds = 0
                         continue
-                    if self.use_proxy_rotation and len(self.proxies) > 1:
-                        self._rotate_proxy()
-                        continue
-                    raise BlockDetected(f"Blocked with status {resp.status_code} at {url}")
-                return resp
+                    else:
+                        raise BlockDetected(f"Blocked with status {resp.status_code} at {url}")
+                return resp # اگر بلاک نشد، جواب رو برگردون
+                
             except BlockDetected:
                 raise
             except requests.RequestException as e:
                 last_exc = e
+                # اگر ارور شبکه بود (مثلا پروکسی مرده بود)، برو سراغ IP بعدی
                 if self.use_proxy_rotation and len(self.proxies) > 1:
+                    print(f"[!] Proxy failed. Auto-rotating to next proxy...")
                     self._rotate_proxy()
                     continue
                 time.sleep(1)
+                
         if last_exc:
             raise last_exc
         raise RuntimeError("Request failed after retries")
