@@ -42,7 +42,6 @@ class RequestEngine:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "AutoHunter/1.0"})
         
-        # اضافه کردن هدرهای کاستوم (مثل Cookie یا Authorization)
         if custom_headers:
             self.session.headers.update(custom_headers)
 
@@ -63,9 +62,13 @@ class RequestEngine:
         self._jitter()
         kwargs.setdefault("timeout", self.timeout)
         kwargs.setdefault("verify", False)
+        
+        # --- پشتیبانی از JSON POST ---
+        if method.upper() == "POST" and "json_data" in kwargs:
+            kwargs["json"] = kwargs.pop("json_data")
+        # ------------------------------
 
         last_exc = None
-        # تعداد تلاش‌ها برابر با تعداد پروکسی‌ها + ۲ بار تلاش عادی
         total_attempts = max(self.max_retries + 1, len(self.proxies) + 1)
         
         for attempt in range(total_attempts):
@@ -74,24 +77,22 @@ class RequestEngine:
             try:
                 resp = self.session.request(method, url, **kwargs)
                 if resp.status_code in (429, 403):
-                    # اگر بلاک شدیم
                     if self.use_proxy_rotation and len(self.proxies) > 1:
                         print(f"[!] Blocked. Auto-rotating IP to next proxy...")
                         self._rotate_proxy()
-                        continue # دوباره با IP جدید تلاش کن
+                        continue
                     elif self.block_wait_seconds > 0:
                         time.sleep(self.block_wait_seconds)
                         self.block_wait_seconds = 0
                         continue
                     else:
                         raise BlockDetected(f"Blocked with status {resp.status_code} at {url}")
-                return resp # اگر بلاک نشد، جواب رو برگردون
+                return resp
                 
             except BlockDetected:
                 raise
             except requests.RequestException as e:
                 last_exc = e
-                # اگر ارور شبکه بود (مثلا پروکسی مرده بود)، برو سراغ IP بعدی
                 if self.use_proxy_rotation and len(self.proxies) > 1:
                     print(f"[!] Proxy failed. Auto-rotating to next proxy...")
                     self._rotate_proxy()
